@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autocommit-ai"
+version = "0.1.0"
+description = "AI-powered git commit message generator — reads your staged diff, writes the commit for you"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["git", "ai", "commit", "cli", "developer-tools"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "anthropic>=0.40.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+autocommit = "autocommit.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/yourname/autocommit"
+Issues = "https://github.com/yourname/autocommit/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["autocommit"]
+
+[tool.ruff]
+line-length = 100
