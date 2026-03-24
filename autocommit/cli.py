@@ -15,6 +15,7 @@ from .git import (
     stage_all,
 )
 from .llm import generate
+from .scanner import scan_diff
 
 console = Console()
 
@@ -104,6 +105,34 @@ def cli(ctx, style, emoji, body, provider, stage_all_files, yes):
         sys.exit(1)
 
     files, _ = get_staged_files()
+
+    # Pre-commit scan — secrets, debug artifacts, conflict markers
+    scan = scan_diff(diff)
+
+    if scan.conflict_markers:
+        console.print("\n[bold red]✗ Conflict markers found in staged changes:[/bold red]")
+        for f in scan.conflict_markers:
+            console.print(f"  [red]line {f.line}:[/red] {f.preview}")
+        console.print("[dim]Resolve conflict markers before committing.[/dim]")
+        sys.exit(1)
+
+    if scan.secrets:
+        console.print("\n[bold red]✗ Possible secrets detected in staged changes:[/bold red]")
+        for f in scan.secrets:
+            console.print(f"  [red]line {f.line} ({f.label}):[/red] {f.preview}")
+        console.print("[dim]Remove secrets and use environment variables instead.[/dim]")
+        console.print("[dim]To override (not recommended): git commit directly.[/dim]")
+        sys.exit(1)
+
+    if scan.debug_artifacts:
+        console.print("\n[bold yellow]⚠ Debug artifacts found:[/bold yellow]")
+        for f in scan.debug_artifacts:
+            console.print(f"  [yellow]line {f.line} ({f.label}):[/yellow] {f.preview}")
+        try:
+            if not click.confirm("\nContinue anyway?", default=False):
+                sys.exit(0)
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(0)
 
     # Truncate very large diffs
     max_lines = config.get("max_diff_lines", 500)
