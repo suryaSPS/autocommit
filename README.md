@@ -2,7 +2,7 @@
 
 # autocommit
 
-**AI-powered git commit message generator — reads your staged diff, writes the commit for you**
+**AI-powered git workflow assistant — review, validate, commit, and ship with confidence**
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
@@ -12,35 +12,23 @@
 
 ---
 
-## The Problem
+## What it does
 
-Writing good commit messages is tedious. Most developers either:
-- Write vague messages like `fix bug` or `update stuff`
-- Spend more time on the message than the actual change
-- Skip conventions entirely under time pressure
+`autocommit` is a full pre-push workflow tool for developers who care about code quality:
 
-## The Solution
-
-`autocommit` reads your staged diff and generates a precise, conventional commit message using Claude or GPT — in under 3 seconds.
+1. **Scans** staged changes for secrets, debug artifacts, and conflict markers before you commit
+2. **Reviews** your code with AI — catches bugs, security issues, and breaking changes
+3. **Generates** precise conventional commit messages from your diff
+4. **Checks** for merge conflicts against your target branch before you push
+5. **Writes** GitHub PR descriptions from your commits and diff
 
 ```
 git add orders/views.py orders/serializers.py
 
-autocommit
-```
-
-```
-Staged (2 files):
-  · orders/views.py
-  · orders/serializers.py
-
-╭─ Suggested commit message ────────────────────────────────────╮
-│ feat(orders): add bulk export endpoint with date range filters │
-╰───────────────────────────────────────────────────────────────╯
-
-[Enter] commit   e edit   r regenerate   q quit
->
-✓ Committed successfully
+autocommit review      # AI code review first
+autocommit             # then commit — scanner runs automatically
+autocommit merge-check # check for conflicts before pushing
+autocommit pr          # generate PR description
 ```
 
 ---
@@ -65,41 +53,125 @@ Add the export to your `~/.zshrc` or `~/.bashrc` so it persists.
 
 ---
 
-## Quick Start
+## Workflow
+
+### 1. Stage your changes
 
 ```bash
-# Stage your changes
 git add <files>
+# or
+autocommit -a   # stage everything
+```
 
-# Generate and commit
+### 2. Review before committing
+
+```bash
+autocommit review
+```
+
+```
+Reviewing 3 files...
+
+╭─ Code Review ─────────────────────────────────────────────────────╮
+│ ⚠️ Minor issues                                                    │
+│                                                                    │
+│ [WARNING] orders/views.py: missing null check on warehouse field   │
+│ [SUGGESTION] orders/serializers.py: consider extracting validation │
+╰───────────────────────────────────────────────────────────────────╯
+```
+
+### 3. Commit — scanner runs automatically
+
+```bash
 autocommit
 ```
 
-That's it. Press Enter to accept, `e` to edit, `r` to regenerate, `q` to quit.
+The scanner checks for secrets, debug artifacts, and conflict markers on every commit:
+
+```
+⚠ Debug artifacts found:
+  line 42 (pdb.set_trace()): pdb.set_trace()
+
+Continue anyway? [y/N]
+```
+
+Secrets and conflict markers are hard blockers — they exit before the LLM is called.
+
+### 4. Check for merge conflicts before pushing
+
+```bash
+autocommit merge-check              # checks against main/master
+autocommit merge-check --into dev   # or a specific branch
+```
+
+```
+✓ Clean merge — feature/bulk-export merges into main with no conflicts.
+```
+
+```
+✗ Merge conflicts detected — feature/bulk-export → main
+
+  · orders/models.py
+    CONFLICT (content): Merge conflict in orders/models.py
+```
+
+### 5. Generate a PR description
+
+```bash
+autocommit pr               # generate from all commits since main
+autocommit pr --into dev    # target a specific branch
+autocommit pr --copy        # copy to clipboard
+```
+
+```
+╭─ PR Title ───────────────────────────────────────────────────────╮
+│ feat(orders): add bulk export endpoint with date range filters   │
+╰──────────────────────────────────────────────────────────────────╯
+
+╭─ PR Description ─────────────────────────────────────────────────╮
+│ ## Summary                                                       │
+│ - Adds POST /orders/export accepting start_date and end_date     │
+│ - Returns CSV with order ID, status, and warehouse               │
+│ - Validates date range and rejects ranges over 90 days           │
+│                                                                  │
+│ ## Test plan                                                      │
+│ - [ ] POST /orders/export returns 200 with valid date range      │
+│ - [ ] Returns 400 when range exceeds 90 days                     │
+│ - [ ] CSV headers match spec                                     │
+╰──────────────────────────────────────────────────────────────────╯
+```
 
 ---
 
-## Usage
+## All commands
+
+| Command | Description |
+|---|---|
+| `autocommit` | Scan + generate commit message (interactive) |
+| `autocommit -a` | Stage all changes, then generate |
+| `autocommit -y` | Auto-accept first suggestion |
+| `autocommit review` | AI code review of staged changes |
+| `autocommit merge-check` | Dry-run conflict check against main/master |
+| `autocommit merge-check --into <branch>` | Check against a specific branch |
+| `autocommit pr` | Generate GitHub PR title + description |
+| `autocommit pr --copy` | Generate and copy to clipboard |
+| `autocommit configure` | Interactive setup |
+| `autocommit install-hook` | Install as git prepare-commit-msg hook |
+| `autocommit version` | Show version |
+
+---
+
+## Options
 
 ```bash
-# Stage everything, then generate
-autocommit -a
+autocommit [OPTIONS]
 
-# Auto-accept without prompting (CI / hooks)
-autocommit -a -y
-
-# Change style for one commit
-autocommit --style simple
-autocommit --style angular
-
-# Add emoji prefix  (✨ feat, 🐛 fix, ♻️ refactor...)
-autocommit --emoji
-
-# Include a commit body explaining WHY
-autocommit --body
-
-# Switch provider for one commit
-autocommit --provider openai
+  -s, --style [conventional|angular|simple]
+  -e, --emoji           Add emoji prefix to type
+  -b, --body            Include a commit body
+  -p, --provider [anthropic|openai]
+  -a, --all             Stage all changes first
+  -y, --yes             Auto-accept without prompting
 ```
 
 ---
@@ -114,16 +186,24 @@ autocommit --provider openai
 
 ---
 
-## Configure
+## Scanner — what gets flagged
 
-Run the interactive setup to save your preferences:
+**Blockers** (hard exit, commit does not proceed):
+- Hardcoded secrets: Anthropic/OpenAI API keys, GitHub tokens, AWS keys, Slack tokens, private keys, hardcoded passwords
+- Merge conflict markers: `<<<<<<<`, `=======`, `>>>>>>>`
+
+**Warnings** (prompt to continue):
+- Debug artifacts: `pdb.set_trace()`, `breakpoint()`, `console.log`, `debugger`, `byebug`, `binding.pry`
+
+---
+
+## Configure
 
 ```bash
 autocommit configure
 ```
 
-Preferences are saved to `~/.autocommit/config.json`.
-API keys are **never** written to disk — always read from environment variables.
+Preferences are saved to `~/.autocommit/config.json`. API keys are **never** written to disk.
 
 <details>
 <summary>Manual config (~/.autocommit/config.json)</summary>
@@ -150,43 +230,15 @@ API keys are **never** written to disk — always read from environment variable
 | `anthropic` (default) | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` |
 
-Switch permanently:
-```bash
-autocommit configure   # select openai when prompted
-```
-
-Switch for one commit:
-```bash
-autocommit -p openai
-```
-
 ---
 
 ## Git Hook
-
-Install `autocommit` as a `prepare-commit-msg` hook so every `git commit` auto-generates a message:
 
 ```bash
 autocommit install-hook
 ```
 
-To uninstall:
-```bash
-rm .git/hooks/prepare-commit-msg
-```
-
----
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `autocommit` | Generate from staged diff (interactive) |
-| `autocommit -a` | Stage all changes, then generate |
-| `autocommit -y` | Auto-accept first suggestion |
-| `autocommit configure` | Interactive setup |
-| `autocommit install-hook` | Install as git hook in current repo |
-| `autocommit version` | Show version |
+Installs `autocommit` as a `prepare-commit-msg` hook — every `git commit` auto-generates and accepts a message. To uninstall: `rm .git/hooks/prepare-commit-msg`.
 
 ---
 
