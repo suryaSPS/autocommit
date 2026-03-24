@@ -77,14 +77,100 @@ Additional rules:
 
 def generate(diff, files, config):
     provider = config.get("provider", "anthropic")
+    prompt = _build_prompt(diff, files, config)
     if provider == "anthropic":
-        return _anthropic(diff, files, config)
+        return _call_anthropic(prompt, config, max_tokens=300)
     if provider == "openai":
-        return _openai(diff, files, config)
+        return _call_openai(prompt, config, max_tokens=300)
     raise ValueError(f"Unknown provider: {provider}")
 
 
-def _anthropic(diff, files, config):
+def generate_review(diff, files, config):
+    """AI code review of staged changes."""
+    provider = config.get("provider", "anthropic")
+    prompt = _build_review_prompt(diff, files)
+    if provider == "anthropic":
+        return _call_anthropic(prompt, config, max_tokens=700)
+    return _call_openai(prompt, config, max_tokens=700)
+
+
+def generate_pr_description(commits, diff, branch, target, config):
+    """Generate a GitHub PR title and description."""
+    provider = config.get("provider", "anthropic")
+    prompt = _build_pr_prompt(commits, diff, branch, target)
+    if provider == "anthropic":
+        return _call_anthropic(prompt, config, max_tokens=900)
+    return _call_openai(prompt, config, max_tokens=900)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Prompts
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _build_review_prompt(diff, files):
+    files_str = "\n".join(f"  - {f}" for f in files)
+    return f"""You are a senior software engineer doing a pre-commit code review.
+
+Changed files:
+{files_str}
+
+Staged diff:
+```
+{diff}
+```
+
+Review this diff for:
+1. **Bugs** — logic errors, off-by-one errors, null/None handling, race conditions
+2. **Security** — injection risks, auth bypasses, insecure defaults, data exposure
+3. **Code quality** — unnecessary complexity, dead code, missing edge cases
+4. **Breaking changes** — removed exports, changed function signatures, API changes
+
+Format your response as:
+- First line: one-line verdict: ✅ Looks good / ⚠️ Minor issues / ❌ Issues found
+- Then list each finding as: [SEVERITY] filename: description
+- SEVERITY is one of: BLOCKER, WARNING, SUGGESTION
+- If no issues, briefly state what looks solid about the change
+- Be concise — max 15 lines total
+- Do NOT summarize what the diff does — focus only on problems or notable quality"""
+
+
+def _build_pr_prompt(commits, diff, branch, target):
+    return f"""You are a senior engineer writing a GitHub pull request description.
+
+Branch: {branch} → {target}
+
+Commits:
+{commits}
+
+Diff (may be truncated):
+```
+{diff[:3000]}
+```
+
+Write a pull request description. Output in this exact format:
+
+TITLE: <title under 70 chars, imperative mood, no period>
+
+## Summary
+<2-4 bullet points: what changed and why>
+
+## Changes
+<technical bullet points — skip if already clear from summary>
+
+## Test plan
+- [ ] <specific verification step>
+- [ ] <specific verification step>
+
+Rules:
+- Be specific, not generic
+- Output ONLY the PR description — no preamble, no explanation, no markdown fences"""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared API callers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _call_anthropic(prompt, config, max_tokens=300):
     try:
         import anthropic
     except ImportError:
@@ -100,13 +186,13 @@ def _anthropic(diff, files, config):
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model=config.get("anthropic_model", "claude-sonnet-4-6"),
-        max_tokens=300,
-        messages=[{"role": "user", "content": _build_prompt(diff, files, config)}],
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text.strip()
 
 
-def _openai(diff, files, config):
+def _call_openai(prompt, config, max_tokens=300):
     try:
         from openai import OpenAI
     except ImportError:
@@ -122,8 +208,8 @@ def _openai(diff, files, config):
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=config.get("openai_model", "gpt-4o-mini"),
-        max_tokens=300,
+        max_tokens=max_tokens,
         temperature=0.3,
-        messages=[{"role": "user", "content": _build_prompt(diff, files, config)}],
+        messages=[{"role": "user", "content": prompt}],
     )
     return response.choices[0].message.content.strip()
