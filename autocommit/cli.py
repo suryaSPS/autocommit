@@ -10,6 +10,10 @@ from .config import load_config, save_config
 from .git import (
     get_staged_diff,
     get_staged_files,
+    get_current_branch,
+    get_default_branch,
+    get_commit_log,
+    get_full_diff_since,
     is_git_repo,
     make_commit,
     stage_all,
@@ -388,6 +392,88 @@ def merge_check(target):
         f"You can pull {target_label}, merge locally, and fix the conflicts.[/dim]\n"
     )
     sys.exit(1)
+
+
+@cli.command()
+@click.option("--into", "target", default=None, help="Target branch for the PR (default: main/master)")
+@click.option("--copy", is_flag=True, help="Copy output to clipboard")
+def pr(target, copy):
+    """Generate a GitHub pull request title and description.
+
+    Reads all commits and the full diff since branching off the target,
+    then generates a PR title + body ready to paste into GitHub.
+
+    \b
+    Example:
+      autocommit pr                  # generate PR description
+      autocommit pr --into staging   # target a specific branch
+      autocommit pr --copy           # copy to clipboard
+    """
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    config = load_config()
+    branch = get_current_branch()
+    if not branch:
+        console.print("[red]✗ Cannot determine current branch (detached HEAD?).[/red]")
+        sys.exit(1)
+
+    if target is None:
+        target = get_default_branch()
+
+    target_ref = f"origin/{target}"
+    import subprocess
+    check = subprocess.run(
+        ["git", "rev-parse", "--verify", target_ref],
+        capture_output=True, text=True,
+    )
+    if check.returncode != 0:
+        target_ref = target  # fall back to local ref
+
+    commits = get_commit_log(base=target_ref)
+    if not commits:
+        console.print(f"[yellow]No commits found between {target_ref} and HEAD.[/yellow]")
+        console.print("[dim]Make sure you have commits that aren't in the target branch.[/dim]")
+        sys.exit(1)
+
+    diff = get_full_diff_since(target_ref)
+
+    console.print(f"\n[dim]Branch:[/dim] {branch} → {target}")
+    commit_count = len([l for l in commits.split("\n") if l.strip()])
+    console.print(f"[dim]Commits:[/dim] {commit_count}\n")
+
+    try:
+        with console.status("[bold blue]Generating PR description...[/bold blue]", spinner="dots"):
+            description = generate_pr_description(commits, diff, branch, target, config)
+    except (EnvironmentError, ImportError) as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+        sys.exit(1)
+
+    # Split TITLE: line from body for display
+    lines = description.strip().split("\n")
+    title_line = next((l for l in lines if l.startswith("TITLE:")), None)
+    if title_line:
+        title = title_line.replace("TITLE:", "").strip()
+        body = "\n".join(l for l in lines if not l.startswith("TITLE:")).strip()
+        console.print(Panel(title, title="[bold]PR Title[/bold]", border_style="cyan"))
+        console.print()
+        console.print(Panel(body, title="[bold]PR Description[/bold]", border_style="blue"))
+    else:
+        console.print(Panel(description, title="[bold]PR Description[/bold]", border_style="blue"))
+
+    if copy:
+        try:
+            import subprocess as sp
+            sp.run(["pbcopy"], input=description.encode(), check=True)
+            console.print("\n[green]✓ Copied to clipboard.[/green]")
+        except Exception:
+            try:
+                sp.run(["xclip", "-selection", "clipboard"], input=description.encode(), check=True)
+                console.print("\n[green]✓ Copied to clipboard.[/green]")
+            except Exception:
+                console.print("\n[dim]--copy not supported on this system.[/dim]")
+    console.print()
 
 
 @cli.command()
