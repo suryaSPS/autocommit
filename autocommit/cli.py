@@ -14,7 +14,7 @@ from .git import (
     make_commit,
     stage_all,
 )
-from .llm import generate
+from .llm import generate, generate_review, generate_pr_description
 from .scanner import scan_diff
 
 console = Console()
@@ -281,6 +281,63 @@ fi
     console.print(f"[green]✓ Hook installed at {hook_path}[/green]")
     console.print("[dim]Now `git commit` will auto-generate and accept a message.[/dim]")
     console.print("[dim]To uninstall: rm .git/hooks/prepare-commit-msg[/dim]")
+
+
+@cli.command()
+def review():
+    """AI code review of staged changes before committing.
+
+    Sends your staged diff to the LLM and gets back a structured review:
+    bugs, security issues, breaking changes, and code quality notes.
+
+    \b
+    Example:
+      git add .
+      autocommit review       # review first
+      autocommit              # then commit
+    """
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    config = load_config()
+    diff, err = get_staged_diff()
+    if err:
+        console.print(f"[red]Git error:[/red] {err}")
+        sys.exit(1)
+
+    if not diff.strip():
+        console.print("[yellow]Nothing staged.[/yellow]  Run [dim]git add <file>[/dim] first.")
+        sys.exit(1)
+
+    files, _ = get_staged_files()
+
+    max_lines = config.get("max_diff_lines", 500)
+    lines = diff.split("\n")
+    if len(lines) > max_lines:
+        diff = "\n".join(lines[:max_lines])
+
+    console.print(f"\n[dim]Reviewing {len(files)} file{'s' if len(files) != 1 else ''}...[/dim]")
+
+    try:
+        with console.status("[bold blue]Running AI code review...[/bold blue]", spinner="dots"):
+            feedback = generate_review(diff, files, config)
+    except (EnvironmentError, ImportError) as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+        sys.exit(1)
+
+    # Pick panel color from verdict line
+    first_line = feedback.split("\n")[0]
+    if "❌" in first_line:
+        style = "red"
+    elif "⚠" in first_line:
+        style = "yellow"
+    else:
+        style = "green"
+
+    console.print()
+    console.print(Panel(feedback, title="[bold]Code Review[/bold]", border_style=style))
+    console.print()
 
 
 @cli.command("merge-check")
