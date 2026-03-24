@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+from typing import Optional, Tuple
 
 
 def is_git_repo():
@@ -57,3 +58,58 @@ def get_repo_name():
     if result.returncode == 0:
         return Path(result.stdout.strip()).name
     return None
+
+
+def get_current_branch() -> Optional[str]:
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        branch = result.stdout.strip()
+        return None if branch == "HEAD" else branch
+    return None
+
+
+def get_default_branch() -> str:
+    """Detect the remote default branch (main, master, or develop)."""
+    for branch in ("main", "master", "develop"):
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"origin/{branch}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return branch
+    return "main"
+
+
+def get_commit_log(base: str, head: str = "HEAD", fmt: str = "%h %s") -> str:
+    """Return a formatted log of commits between base and head."""
+    result = subprocess.run(
+        ["git", "log", f"{base}..{head}", f"--pretty=format:{fmt}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def get_full_diff_since(base: str) -> str:
+    """Return the full diff of all changes since base ref."""
+    result = subprocess.run(
+        ["git", "diff", base, "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def fetch_remote(branch: str) -> Tuple[bool, str]:
+    """Fetch a remote branch. Returns (success, stderr)."""
+    result = subprocess.run(
+        ["git", "fetch", "origin", branch],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0, result.stderr
