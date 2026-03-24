@@ -283,6 +283,56 @@ fi
     console.print("[dim]To uninstall: rm .git/hooks/prepare-commit-msg[/dim]")
 
 
+@cli.command("merge-check")
+@click.option("--into", "target", default=None, help="Target branch to check against (default: main/master)")
+def merge_check(target):
+    """Dry-run merge check — detect conflicts before you push.
+
+    Fetches the target branch and runs a merge simulation without touching
+    your working tree. Reports which files would conflict and why.
+
+    \b
+    Examples:
+      autocommit merge-check              # check against main/master
+      autocommit merge-check --into dev   # check against a specific branch
+    """
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    from .merge import check_merge
+
+    with console.status("[bold blue]Checking for merge conflicts...[/bold blue]", spinner="dots"):
+        result = check_merge(target)
+
+    branch_label = f"[bold]{result.current_branch or 'HEAD'}[/bold]"
+    target_label = f"[bold]{result.target_branch}[/bold]"
+
+    if result.fetch_failed:
+        console.print(f"[yellow]⚠ Could not fetch origin/{result.target_branch} — using local ref.[/yellow]")
+        if result.fetch_error:
+            console.print(f"[dim]{result.fetch_error}[/dim]")
+
+    if result.error:
+        console.print(f"[red]✗ {result.error}[/red]")
+        sys.exit(1)
+
+    if result.clean:
+        console.print(f"\n[bold green]✓ Clean merge[/bold green] — {branch_label} merges into {target_label} with no conflicts.\n")
+        return
+
+    console.print(f"\n[bold red]✗ Merge conflicts detected[/bold red] — {branch_label} → {target_label}\n")
+    for c in result.conflicts:
+        console.print(f"  [red]·[/red] [bold]{c.path}[/bold]")
+        if c.reason and c.reason != c.path:
+            console.print(f"    [dim]{c.reason}[/dim]")
+    console.print(
+        f"\n[dim]Resolve these conflicts before merging. "
+        f"You can pull {target_label}, merge locally, and fix the conflicts.[/dim]\n"
+    )
+    sys.exit(1)
+
+
 @cli.command()
 def version():
     """Show version."""
