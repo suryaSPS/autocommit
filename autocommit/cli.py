@@ -1,4 +1,3 @@
-import os
 import sys
 
 import click
@@ -14,6 +13,7 @@ from .git import (
     get_default_branch,
     get_commit_log,
     get_full_diff_since,
+    ref_exists,
     is_git_repo,
     make_commit,
     stage_all,
@@ -50,6 +50,108 @@ def _generate_with_spinner(diff, files, config):
         return generate(diff, files, config)
 
 
+def _load_config_or_exit():
+    try:
+        return load_config()
+    except ValueError as e:
+        console.print(f"[red]Config error:[/red] {e}")
+        sys.exit(1)
+
+
+def _apply_overrides(config, style=None, emoji=None, body=None, provider=None):
+    if style:
+        config["style"] = style
+    if emoji is not None:
+        config["emoji"] = emoji
+    if body is not None:
+        config["include_body"] = body
+    if provider:
+        config["provider"] = provider
+    return config
+
+
+def _collect_staged_changes(stage_all_files=False):
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    if stage_all_files:
+        success, err = stage_all()
+        if not success:
+            console.print(f"[red]Failed to stage files:[/red] {err.strip()}")
+            sys.exit(1)
+
+    diff, err = get_staged_diff()
+    if err:
+        console.print(f"[red]Git error:[/red] {err}")
+        sys.exit(1)
+
+    if not diff.strip():
+        console.print("[yellow]Nothing staged.[/yellow]  Stage changes first:\n")
+        console.print("  [dim]git add <file>[/dim]        stage specific files")
+        console.print("  [dim]autocommit -a[/dim]         stage everything and generate")
+        sys.exit(1)
+
+    files, err = get_staged_files()
+    if err:
+        console.print(f"[red]Git error:[/red] {err}")
+        sys.exit(1)
+
+    return diff, files
+
+
+def _truncate_diff(diff, config):
+    max_lines = config.get("max_diff_lines", 500)
+    try:
+        max_lines = int(max_lines)
+    except (TypeError, ValueError):
+        max_lines = 500
+    max_lines = max(1, max_lines)
+
+    lines = diff.split("\n")
+    if len(lines) > max_lines:
+        diff = "\n".join(lines[:max_lines])
+        console.print(f"[dim]Diff truncated to {max_lines} lines.[/dim]")
+    return diff
+
+
+def _show_staged_files(files):
+    console.print(f"\n[dim]Staged ({len(files)} file{'s' if len(files) != 1 else ''}):[/dim]")
+    for f in files[:8]:
+        console.print(f"  [dim]· {f}[/dim]")
+    if len(files) > 8:
+        console.print(f"  [dim]· ... and {len(files) - 8} more[/dim]")
+
+
+def _scan_or_exit(diff):
+    scan = scan_diff(diff)
+
+    if scan.conflict_markers:
+        console.print("\n[bold red]✗ Conflict markers found in staged changes:[/bold red]")
+        for f in scan.conflict_markers:
+            console.print(f"  [red]line {f.line}:[/red] {f.preview}")
+        console.print("[dim]Resolve conflict markers before committing.[/dim]")
+        sys.exit(1)
+
+    if scan.secrets:
+        console.print("\n[bold red]✗ Possible secrets detected in staged changes:[/bold red]")
+        for f in scan.secrets:
+            console.print(f"  [red]line {f.line} ({f.label}):[/red] {f.preview}")
+        console.print("[dim]Remove secrets and use environment variables instead.[/dim]")
+        console.print("[dim]To override (not recommended): git commit directly.[/dim]")
+        sys.exit(1)
+
+    if scan.debug_artifacts:
+        console.print("\n[bold yellow]⚠ Debug artifacts found:[/bold yellow]")
+        for f in scan.debug_artifacts:
+            console.print(f"  [yellow]line {f.line} ({f.label}):[/yellow] {f.preview}")
+        try:
+            if not click.confirm("\nContinue anyway?", default=False):
+                sys.exit(0)
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(0)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main command
 # ──────────────────────────────────────────────────────────────────────────────
@@ -78,79 +180,11 @@ def cli(ctx, style, emoji, body, provider, stage_all_files, yes):
     if ctx.invoked_subcommand is not None:
         return
 
-    if not is_git_repo():
-        console.print("[red]✗ Not inside a git repository.[/red]")
-        sys.exit(1)
-
-    config = load_config()
-
-    # CLI flag overrides
-    if style:
-        config["style"] = style
-    if emoji is not None:
-        config["emoji"] = emoji
-    if body is not None:
-        config["include_body"] = body
-    if provider:
-        config["provider"] = provider
-
-    if stage_all_files:
-        stage_all()
-
-    diff, err = get_staged_diff()
-    if err:
-        console.print(f"[red]Git error:[/red] {err}")
-        sys.exit(1)
-
-    if not diff.strip():
-        console.print("[yellow]Nothing staged.[/yellow]  Stage changes first:\n")
-        console.print("  [dim]git add <file>[/dim]        stage specific files")
-        console.print("  [dim]autocommit -a[/dim]         stage everything and generate")
-        sys.exit(1)
-
-    files, _ = get_staged_files()
-
-    # Pre-commit scan — secrets, debug artifacts, conflict markers
-    scan = scan_diff(diff)
-
-    if scan.conflict_markers:
-        console.print("\n[bold red]✗ Conflict markers found in staged changes:[/bold red]")
-        for f in scan.conflict_markers:
-            console.print(f"  [red]line {f.line}:[/red] {f.preview}")
-        console.print("[dim]Resolve conflict markers before committing.[/dim]")
-        sys.exit(1)
-
-    if scan.secrets:
-        console.print("\n[bold red]✗ Possible secrets detected in staged changes:[/bold red]")
-        for f in scan.secrets:
-            console.print(f"  [red]line {f.line} ({f.label}):[/red] {f.preview}")
-        console.print("[dim]Remove secrets and use environment variables instead.[/dim]")
-        console.print("[dim]To override (not recommended): git commit directly.[/dim]")
-        sys.exit(1)
-
-    if scan.debug_artifacts:
-        console.print("\n[bold yellow]⚠ Debug artifacts found:[/bold yellow]")
-        for f in scan.debug_artifacts:
-            console.print(f"  [yellow]line {f.line} ({f.label}):[/yellow] {f.preview}")
-        try:
-            if not click.confirm("\nContinue anyway?", default=False):
-                sys.exit(0)
-        except (KeyboardInterrupt, EOFError):
-            sys.exit(0)
-
-    # Truncate very large diffs
-    max_lines = config.get("max_diff_lines", 500)
-    lines = diff.split("\n")
-    if len(lines) > max_lines:
-        diff = "\n".join(lines[:max_lines])
-        console.print(f"[dim]Diff truncated to {max_lines} lines.[/dim]")
-
-    # Show what's staged
-    console.print(f"\n[dim]Staged ({len(files)} file{'s' if len(files) != 1 else ''}):[/dim]")
-    for f in files[:8]:
-        console.print(f"  [dim]· {f}[/dim]")
-    if len(files) > 8:
-        console.print(f"  [dim]· ... and {len(files) - 8} more[/dim]")
+    config = _apply_overrides(_load_config_or_exit(), style, emoji, body, provider)
+    diff, files = _collect_staged_changes(stage_all_files)
+    _scan_or_exit(diff)
+    diff = _truncate_diff(diff, config)
+    _show_staged_files(files)
 
     # Generate + interactive loop
     message = None
@@ -216,7 +250,7 @@ def cli(ctx, style, emoji, body, provider, stage_all_files, yes):
 @cli.command()
 def configure():
     """Interactive setup — choose provider, style, and preferences."""
-    config = load_config()
+    config = _load_config_or_exit()
 
     provider = click.prompt(
         "LLM provider",
@@ -242,11 +276,31 @@ def configure():
 
     path = save_config(config)
     console.print(f"\n[green]✓ Config saved to {path}[/green]")
-    console.print(f"\n[dim]Set your API key:[/dim]")
+    console.print("\n[dim]Set your API key:[/dim]")
     if provider == "anthropic":
         console.print("  [dim]export ANTHROPIC_API_KEY=sk-ant-...[/dim]")
     else:
         console.print("  [dim]export OPENAI_API_KEY=sk-...[/dim]")
+
+
+@cli.command()
+@click.option("--style", "-s", type=click.Choice(["conventional", "angular", "simple"]), help="Commit message style")
+@click.option("--emoji", "-e", is_flag=True, default=None, help="Add emoji prefix to type")
+@click.option("--body", "-b", is_flag=True, default=None, help="Include a commit body")
+@click.option("--provider", "-p", type=click.Choice(["anthropic", "openai"]), help="LLM provider")
+def suggest(style, emoji, body, provider):
+    """Print a commit message suggestion without committing."""
+    config = _apply_overrides(_load_config_or_exit(), style, emoji, body, provider)
+    diff, files = _collect_staged_changes()
+    diff = _truncate_diff(diff, config)
+    try:
+        click.echo(generate(diff, files, config))
+    except (EnvironmentError, ImportError, ValueError) as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Unexpected error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command("install-hook")
@@ -273,9 +327,9 @@ def install_hook():
 COMMIT_MSG_FILE="$1"
 COMMIT_SOURCE="$2"
 
-# Only run on blank commits (skip merge, squash, fixup, etc.)
+# Only run on blank commits (skip merge, squash, fixup, etc.).
 if [ -z "$COMMIT_SOURCE" ]; then
-    autocommit --yes 2>/dev/null || true
+    autocommit suggest > "$COMMIT_MSG_FILE" 2>/dev/null || true
 fi
 """
 
@@ -283,7 +337,7 @@ fi
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     console.print(f"[green]✓ Hook installed at {hook_path}[/green]")
-    console.print("[dim]Now `git commit` will auto-generate and accept a message.[/dim]")
+    console.print("[dim]Now `git commit` will auto-fill a message for review.[/dim]")
     console.print("[dim]To uninstall: rm .git/hooks/prepare-commit-msg[/dim]")
 
 
@@ -423,12 +477,7 @@ def pr(target, copy):
         target = get_default_branch()
 
     target_ref = f"origin/{target}"
-    import subprocess
-    check = subprocess.run(
-        ["git", "rev-parse", "--verify", target_ref],
-        capture_output=True, text=True,
-    )
-    if check.returncode != 0:
+    if not ref_exists(target_ref):
         target_ref = target  # fall back to local ref
 
     commits = get_commit_log(base=target_ref)
@@ -440,7 +489,7 @@ def pr(target, copy):
     diff = get_full_diff_since(target_ref)
 
     console.print(f"\n[dim]Branch:[/dim] {branch} → {target}")
-    commit_count = len([l for l in commits.split("\n") if l.strip()])
+    commit_count = len([line for line in commits.split("\n") if line.strip()])
     console.print(f"[dim]Commits:[/dim] {commit_count}\n")
 
     try:
@@ -452,10 +501,10 @@ def pr(target, copy):
 
     # Split TITLE: line from body for display
     lines = description.strip().split("\n")
-    title_line = next((l for l in lines if l.startswith("TITLE:")), None)
+    title_line = next((line for line in lines if line.startswith("TITLE:")), None)
     if title_line:
         title = title_line.replace("TITLE:", "").strip()
-        body = "\n".join(l for l in lines if not l.startswith("TITLE:")).strip()
+        body = "\n".join(line for line in lines if not line.startswith("TITLE:")).strip()
         console.print(Panel(title, title="[bold]PR Title[/bold]", border_style="cyan"))
         console.print()
         console.print(Panel(body, title="[bold]PR Description[/bold]", border_style="blue"))
@@ -464,12 +513,16 @@ def pr(target, copy):
 
     if copy:
         try:
-            import subprocess as sp
-            sp.run(["pbcopy"], input=description.encode(), check=True)
+            import subprocess as sp  # nosec B404
+            sp.run(["pbcopy"], input=description.encode(), check=True)  # nosec B603 B607
             console.print("\n[green]✓ Copied to clipboard.[/green]")
         except Exception:
             try:
-                sp.run(["xclip", "-selection", "clipboard"], input=description.encode(), check=True)
+                sp.run(  # nosec B603 B607
+                    ["xclip", "-selection", "clipboard"],
+                    input=description.encode(),
+                    check=True,
+                )
                 console.print("\n[green]✓ Copied to clipboard.[/green]")
             except Exception:
                 console.print("\n[dim]--copy not supported on this system.[/dim]")

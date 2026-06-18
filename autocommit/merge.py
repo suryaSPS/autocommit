@@ -1,8 +1,7 @@
-import subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from .git import fetch_remote, get_current_branch, get_default_branch
+from .git import _run_git, fetch_remote, get_current_branch, get_default_branch, ref_exists
 
 
 @dataclass
@@ -26,11 +25,7 @@ class MergeCheckResult:
 
 
 def _merge_base(ref_a: str, ref_b: str) -> Optional[str]:
-    result = subprocess.run(
-        ["git", "merge-base", ref_a, ref_b],
-        capture_output=True,
-        text=True,
-    )
+    result = _run_git(["merge-base", ref_a, ref_b])
     return result.stdout.strip() if result.returncode == 0 else None
 
 
@@ -94,11 +89,7 @@ def check_merge(target: Optional[str] = None) -> MergeCheckResult:
     target_ref = f"origin/{target}" if not result.fetch_failed else target
 
     # Ensure target ref exists locally
-    verify = subprocess.run(
-        ["git", "rev-parse", "--verify", target_ref],
-        capture_output=True, text=True,
-    )
-    if verify.returncode != 0:
+    if not ref_exists(target_ref):
         result.error = f"Cannot resolve ref '{target_ref}'. Is the branch name correct?"
         return result
 
@@ -108,11 +99,7 @@ def check_merge(target: Optional[str] = None) -> MergeCheckResult:
         return result
 
     # Try modern merge-tree (git >= 2.38)
-    modern = subprocess.run(
-        ["git", "merge-tree", "--write-tree", "--no-messages", merge_base, "HEAD", target_ref],
-        capture_output=True,
-        text=True,
-    )
+    modern = _run_git(["merge-tree", "--write-tree", "--no-messages", merge_base, "HEAD", target_ref])
 
     if modern.returncode == 0:
         return result  # clean merge
@@ -124,11 +111,7 @@ def check_merge(target: Optional[str] = None) -> MergeCheckResult:
             return result
 
     # Fallback to classic merge-tree (git < 2.38)
-    classic = subprocess.run(
-        ["git", "merge-tree", merge_base, "HEAD", target_ref],
-        capture_output=True,
-        text=True,
-    )
+    classic = _run_git(["merge-tree", merge_base, "HEAD", target_ref])
     if "<<<<<<" in classic.stdout:
         result.conflicts = _parse_conflicts_old(classic.stdout)
         if not result.conflicts:

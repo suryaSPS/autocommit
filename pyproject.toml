@@ -38,5 +38,21 @@ Issues = "https://github.com/yourname/autocommit/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["autocommit"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/autocommit",
+    "/README.md",
+    "/pyproject.toml",
+    "/LICENSE",
+]
+exclude = [
+    "/venv",
+    "/.venv",
+    "/dist",
+    "/build",
+    "/.pytest_cache",
+    "/.ruff_cache",
+]
+
 [tool.ruff]
 line-length = 100
