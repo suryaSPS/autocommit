@@ -150,6 +150,7 @@ autocommit pr --copy        # copy to clipboard
 | `autocommit` | Scan + generate commit message (interactive) |
 | `autocommit -a` | Stage all changes, then generate |
 | `autocommit -y` | Auto-accept first suggestion |
+| `autocommit suggest` | Print a suggested message without committing |
 | `autocommit review` | AI code review of staged changes |
 | `autocommit merge-check` | Dry-run conflict check against main/master |
 | `autocommit merge-check --into <branch>` | Check against a specific branch |
@@ -203,7 +204,9 @@ autocommit [OPTIONS]
 autocommit configure
 ```
 
-Preferences are saved to `~/.autocommit/config.json`. API keys are **never** written to disk.
+Preferences are saved to `~/.autocommit/config.json`.
+API keys are **never** written to disk — always read from environment variables.
+Obvious secret-looking values in staged diffs are redacted before prompts are sent to the provider.
 
 <details>
 <summary>Manual config (~/.autocommit/config.json)</summary>
@@ -238,7 +241,12 @@ Preferences are saved to `~/.autocommit/config.json`. API keys are **never** wri
 autocommit install-hook
 ```
 
-Installs `autocommit` as a `prepare-commit-msg` hook — every `git commit` auto-generates and accepts a message. To uninstall: `rm .git/hooks/prepare-commit-msg`.
+Installs `autocommit` as a `prepare-commit-msg` hook so blank commit messages are auto-filled for review.
+
+To uninstall:
+```bash
+rm .git/hooks/prepare-commit-msg
+```
 
 ---
 
