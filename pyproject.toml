@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autocommit-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI-powered git commit message generator — reads your staged diff, writes the commit for you"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,8 +32,8 @@ dev = ["pytest", "ruff"]
 autocommit = "autocommit.cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/yourname/autocommit"
-Issues = "https://github.com/yourname/autocommit/issues"
+Homepage = "https://github.com/suryaSPS/autocommit"
+Issues = "https://github.com/suryaSPS/autocommit/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["autocommit"]
