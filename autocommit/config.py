@@ -1,18 +1,20 @@
 import json
-import os
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".autocommit" / "config.json"
 
 DEFAULTS = {
     "provider": "anthropic",
-    "anthropic_model": "claude-sonnet-4-6",
+    "anthropic_model": "claude-opus-4-8",
     "openai_model": "gpt-4o-mini",
+    "ollama_model": "llama3.2",
+    "ollama_host": "http://localhost:11434",
     "style": "conventional",
     "include_scope": True,
     "include_body": False,
     "emoji": False,
     "max_diff_lines": 500,
+    "scan_secrets": True,
 }
 
 
