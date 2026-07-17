@@ -26,7 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "mypy", "pre-commit"]
 
 [project.scripts]
 autocommit = "autocommit.cli:cli"
@@ -40,3 +40,8 @@ packages = ["autocommit"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.mypy]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true

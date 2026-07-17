@@ -29,5 +29,9 @@ jobs:
       - name: Lint with ruff
         run: ruff check .
 
+      - name: Type-check with mypy
+        if: matrix.python-version == '3.12'
+        run: mypy autocommit/
+
       - name: Run tests
         run: pytest -q
