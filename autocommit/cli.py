@@ -5,23 +5,32 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from .changelog import build_changelog
 from .config import load_config, save_config
+from .explain import explain as _explain
 from .git import (
     get_branch_commits,
     get_branch_diff,
+    get_commit_subjects_since,
     get_current_branch,
     get_default_branch,
+    get_last_tag,
+    get_recent_commit_subjects,
     get_staged_diff,
     get_staged_files,
+    get_unstaged_files,
     is_git_repo,
     make_commit,
     stage_all,
+    stage_files,
+    unstage_all,
 )
 from .llm import generate
 from .pr import write_pr
 from .review import offline_review
 from .review import review as _review
 from .secrets import scan_diff
+from .split import propose_groups_ai
 
 console = Console()
 
@@ -62,7 +71,8 @@ def _generate_with_spinner(diff, files, config):
     else:
         text = "[bold blue]Generating commit message...[/bold blue]"
     with console.status(text, spinner="dots"):
-        return generate(diff, files, config)
+        # Recent subjects teach the model this repo's commit conventions
+        return generate(diff, files, config, recent_subjects=get_recent_commit_subjects())
 
 
 def _render_findings(findings, title="Secrets detected"):
@@ -544,6 +554,219 @@ def pr(base, provider, no_ai):
     _show_message(title, title="PR title", style="magenta")
     console.print(Markdown(body))
     console.print()
+
+
+@cli.command()
+@click.option("--all", "-a", "stage_all_files", is_flag=True, help="Stage all changes first")
+@click.option("--yes", "-y", is_flag=True, help="Commit each group without prompting")
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(PROVIDER_CHOICES),
+    help="LLM provider for grouping and messages",
+)
+@click.option("--no-ai", "no_ai", is_flag=True, help="Deterministic grouping, no API key")
+def split(stage_all_files, yes, provider, no_ai):
+    """Split the staged changes into a series of atomic commits.
+
+    Groups the staged files into logical commits (source by scope, then
+    tests, docs, config) and commits each group with its own generated
+    message. Splitting is file-level: one file never spans two commits.
+    """
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    config = load_config()
+    if provider:
+        config["provider"] = provider
+    if no_ai:
+        config["provider"] = "local"
+
+    if stage_all_files:
+        stage_all()
+
+    diff, err = get_staged_diff()
+    if err:
+        console.print(f"[red]Git error:[/red] {err}")
+        sys.exit(1)
+    if not diff.strip():
+        console.print("[yellow]Nothing staged.[/yellow]  Stage changes first (or use -a).")
+        sys.exit(1)
+
+    files, _ = get_staged_files()
+    if len(files) < 2:
+        console.print("[yellow]Only one file staged — nothing to split.[/yellow]")
+        sys.exit(1)
+
+    # A file with BOTH staged and unstaged edits would drag its unstaged
+    # edits into a group when re-added. Refuse rather than commit surprises.
+    overlap = sorted(set(files) & set(get_unstaged_files()))
+    if overlap:
+        console.print("[red]These files have unstaged edits on top of staged ones:[/red]")
+        for f in overlap:
+            console.print(f"  [yellow]· {f}[/yellow]")
+        console.print("[dim]Stash them first ([bold]git stash -k[/bold]) or stage everything.[/dim]")
+        sys.exit(1)
+
+    if config.get("scan_secrets", True):
+        _secret_gate(diff, yes)
+
+    try:
+        with console.status("[bold blue]Planning commit groups...[/bold blue]", spinner="dots"):
+            groups, used_ai = propose_groups_ai(diff, files, config)
+    except (EnvironmentError, ImportError) as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+        sys.exit(1)
+
+    if len(groups) < 2:
+        console.print("[yellow]These changes already belong in a single commit.[/yellow]")
+        sys.exit(0)
+
+    source = "AI grouping" if used_ai else "heuristic grouping"
+    console.print(f"\n[bold]Proposed split[/bold] [dim]({len(groups)} commits, {source})[/dim]\n")
+    for i, group in enumerate(groups, 1):
+        console.print(f"  [bold cyan]Commit {i}[/bold cyan] [dim]— {group.reason}[/dim]")
+        for f in group.files:
+            console.print(f"    [dim]· {f}[/dim]")
+    console.print()
+
+    if not yes:
+        try:
+            confirm = input("Create these commits? [y/N] > ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Aborted.[/dim]")
+            sys.exit(0)
+        if confirm != "y":
+            console.print("[dim]Aborted — staging left untouched.[/dim]")
+            sys.exit(0)
+
+    recent = get_recent_commit_subjects()
+    created: list = []
+    for i, group in enumerate(groups, 1):
+        unstage_all()
+        stage_files(group.files)
+        gdiff, gerr = get_staged_diff()
+        if gerr or not (gdiff or "").strip():
+            _restore_and_die(files, f"could not stage group {i}", created)
+        try:
+            message = generate(gdiff, group.files, config, recent_subjects=recent)
+        except Exception as e:
+            _restore_and_die(files, str(e), created)
+        success, _, cerr = make_commit(message)
+        if not success:
+            _restore_and_die(files, cerr.strip(), created)
+        created.append(message)
+        console.print(f"[green]✓ {i}/{len(groups)}[/green]  {message}")
+
+    console.print(f"\n[bold green]✓ Created {len(created)} commits.[/bold green]")
+
+
+def _restore_and_die(all_files, reason, created):
+    """Re-stage whatever wasn't committed yet, report, and exit."""
+    unstage_all()
+    stage_files(all_files)  # already-committed files produce no diff; the rest re-stage
+    console.print(f"\n[red]✗ Split failed:[/red] {reason}")
+    if created:
+        console.print(f"[dim]{len(created)} commit(s) were already created and remain.[/dim]")
+    console.print("[dim]Remaining changes have been re-staged.[/dim]")
+    sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(PROVIDER_CHOICES),
+    help="LLM provider to explain with",
+)
+def explain(provider):
+    """Explain the staged diff: what changed, why, impact, and risk."""
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    config = load_config()
+    if provider:
+        config["provider"] = provider
+
+    diff, err = get_staged_diff()
+    if err:
+        console.print(f"[red]Git error:[/red] {err}")
+        sys.exit(1)
+    if not diff.strip():
+        console.print("[yellow]Nothing staged.[/yellow]  Stage changes first.")
+        sys.exit(1)
+
+    files, _ = get_staged_files()
+
+    try:
+        with console.status("[bold blue]Reading the diff...[/bold blue]", spinner="dots"):
+            text = _explain(diff, files, config)
+    except (EnvironmentError, ImportError) as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+        sys.exit(1)
+
+    if text is None:
+        console.print(
+            "[yellow]explain needs an AI provider[/yellow] — the offline heuristic can "
+            "classify a change but not explain it."
+        )
+        console.print("[dim]Try: autocommit explain -p ollama   (free, local)[/dim]")
+        sys.exit(1)
+
+    from rich.markdown import Markdown
+
+    console.print()
+    console.print(Markdown(text))
+    console.print()
+
+
+@cli.command()
+@click.option("--since", help="Start after this tag/ref (default: last tag, else all history)")
+@click.option("--label", default=None, help="Release heading (default: Unreleased)")
+@click.option("--write", "-w", "write_file", is_flag=True, help="Prepend to CHANGELOG.md")
+def changelog(since, label, write_file):
+    """Generate a changelog section from conventional commit history.
+
+    Deterministic by design — the same history always produces the same
+    changelog. No API key needed.
+    """
+    if not is_git_repo():
+        console.print("[red]✗ Not inside a git repository.[/red]")
+        sys.exit(1)
+
+    since = since or get_last_tag()
+    subjects, err = get_commit_subjects_since(since)
+    if err:
+        console.print(f"[red]Git error:[/red] {err.strip()}")
+        sys.exit(1)
+    if not subjects:
+        console.print("[yellow]No commits found in that range.[/yellow]")
+        sys.exit(1)
+
+    heading = label or "Unreleased"
+    block = build_changelog(subjects, label=heading)
+    range_desc = f"since {since}" if since else "entire history"
+    console.print(f"[dim]{len(subjects)} commits ({range_desc})[/dim]\n")
+
+    if write_file:
+        from pathlib import Path
+
+        path = Path("CHANGELOG.md")
+        existing = path.read_text() if path.exists() else ""
+        if existing.startswith("# Changelog"):
+            head, _, rest = existing.partition("\n\n")
+            existing = rest
+        else:
+            head = "# Changelog"
+        path.write_text(f"{head}\n\n{block}\n{existing}".rstrip() + "\n")
+        console.print(f"[green]✓ Written to {path}[/green]")
+    else:
+        from rich.markdown import Markdown
+
+        console.print(Markdown(block))
+        console.print()
 
 
 @cli.command()
