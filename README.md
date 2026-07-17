@@ -301,6 +301,81 @@ rm .git/hooks/prepare-commit-msg
 
 ---
 
+## Commit Splitting
+
+Staged everything at once? `autocommit split` clusters the staged files into
+logical commits — source changes by scope, then tests, docs, and config — and
+commits each group with its own generated message:
+
+```
+git add .
+autocommit split
+
+Proposed split (3 commits, AI grouping)
+
+  Commit 1 — auth refactor
+    · auth/views.py
+    · auth/models.py
+  Commit 2 — test changes
+    · tests/test_auth.py
+  Commit 3 — documentation
+    · README.md
+
+Create these commits? [y/N] > y
+✓ 1/3  refactor(auth): move JWT validation into middleware
+✓ 2/3  test(auth): cover middleware token validation
+✓ 3/3  docs: document the new auth flow
+```
+
+AI providers propose the grouping from the diff; the response is strictly
+validated (every staged file in exactly one group) and falls back to
+deterministic grouping otherwise — `--no-ai` uses it directly. Splitting is
+file-level, so a single file's hunks never end up divided across commits.
+Files with both staged *and* unstaged edits abort the split rather than
+silently dragging unstaged work into a commit.
+
+---
+
+## Explain & Changelog
+
+```bash
+# Plain-language explanation of the staged diff — what, why, impact, risk
+autocommit explain
+
+# Changelog section from conventional commits since the last tag
+autocommit changelog
+
+# ...or a labelled release, prepended to CHANGELOG.md
+autocommit changelog --label v0.3.0 --write
+```
+
+`changelog` is deliberately deterministic — the same history always produces
+the same changelog, so it needs no API key and works in CI.
+
+`autocommit` also reads your recent commit history when generating messages,
+so suggestions match the tone and scope conventions your repo already uses.
+
+---
+
+## Custom Providers
+
+Backends are pluggable. Anything that can complete a prompt can drive every
+feature — subclass, register, done:
+
+```python
+from autocommit.providers import LLMProvider, register
+
+class GroqProvider(LLMProvider):
+    name = "groq"
+
+    def complete(self, prompt, config, max_tokens=1024):
+        ...  # call any API you like
+
+register(GroqProvider())
+```
+
+---
+
 ## Commands
 
 | Command | Description |
@@ -312,6 +387,9 @@ rm .git/hooks/prepare-commit-msg
 | `autocommit scan` | Scan staged changes for secrets (exits 1 on findings) |
 | `autocommit review` | Review the staged diff for bugs and issues |
 | `autocommit pr` | Draft a PR title and description for the branch |
+| `autocommit split` | Split staged changes into a series of atomic commits |
+| `autocommit explain` | Explain the staged diff: what, why, impact, risk |
+| `autocommit changelog` | Generate a changelog from conventional commit history |
 | `autocommit configure` | Interactive setup |
 | `autocommit install-hook` | Install as git hook in current repo |
 | `autocommit version` | Show version |
