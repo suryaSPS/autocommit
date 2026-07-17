@@ -1,6 +1,8 @@
 import os
 from pathlib import PurePosixPath
 
+from . import providers
+
 
 STYLE_INSTRUCTIONS = {
     "conventional": """\
@@ -36,7 +38,7 @@ Example: "Add user authentication" or "Fix null pointer in order view" """,
 }
 
 
-def _build_prompt(diff, files, config):
+def _build_prompt(diff, files, config, recent_subjects=None):
     style = config.get("style", "conventional")
     include_scope = config.get("include_scope", True)
     include_body = config.get("include_body", False)
@@ -44,6 +46,14 @@ def _build_prompt(diff, files, config):
 
     files_str = "\n".join(f"  - {f}" for f in files)
     style_block = STYLE_INSTRUCTIONS.get(style, STYLE_INSTRUCTIONS["conventional"])
+
+    recent_block = ""
+    if recent_subjects:
+        joined = "\n".join(f"  {s}" for s in recent_subjects[:20])
+        recent_block = (
+            "\nRecent commit messages in this repository — match their tone, "
+            f"scope naming, and conventions:\n{joined}\n"
+        )
 
     scope_note = "" if include_scope else "Do NOT include a scope."
     body_note = (
@@ -71,6 +81,7 @@ Staged diff:
 {scope_note}
 {body_note}
 {emoji_note}
+{recent_block}
 
 Additional rules:
 - Be specific, not generic ("fix bug" is bad, "fix null check in order serializer" is good)
@@ -87,21 +98,14 @@ def complete(prompt, config, max_tokens=1024):
     Shared by every AI feature (commit messages, review, PR descriptions).
     Local/heuristic mode has no completion backend — callers handle it themselves.
     """
-    provider = config.get("provider", "anthropic")
-    if provider == "anthropic":
-        return _anthropic(prompt, config, max_tokens)
-    if provider == "openai":
-        return _openai(prompt, config, max_tokens)
-    if provider == "ollama":
-        return _ollama(prompt, config)
-    raise ValueError(f"Unknown provider: {provider}")
+    return providers.get(config.get("provider", "anthropic")).complete(prompt, config, max_tokens)
 
 
-def generate(diff, files, config):
+def generate(diff, files, config, recent_subjects=None):
     provider = config.get("provider", "anthropic")
     if provider in LOCAL_PROVIDERS:
         return _heuristic(diff, files, config)
-    return complete(_build_prompt(diff, files, config), config, max_tokens=300)
+    return complete(_build_prompt(diff, files, config, recent_subjects), config, max_tokens=300)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -292,74 +296,3 @@ def _heuristic(diff, files, config):
     scope = _infer_scope(files) if config.get("include_scope", True) else None
     subject = _build_subject(ctype, files, added, deleted)
     return _format_message(ctype, scope, subject, config)
-
-
-def _anthropic(prompt, config, max_tokens):
-    try:
-        import anthropic
-    except ImportError:
-        raise ImportError("Install the Anthropic SDK:  pip install anthropic")
-
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY is not set.\nExport it:  export ANTHROPIC_API_KEY=sk-ant-..."
-        )
-
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=config.get("anthropic_model", "claude-opus-4-8"),
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = next((b.text for b in message.content if b.type == "text"), "")
-    return text.strip()
-
-
-def _openai(prompt, config, max_tokens):
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("Install the OpenAI SDK:  pip install openai")
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise EnvironmentError(
-            "OPENAI_API_KEY is not set.\nExport it:  export OPENAI_API_KEY=sk-..."
-        )
-
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=config.get("openai_model", "gpt-4o-mini"),
-        max_tokens=max_tokens,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content.strip()
-
-
-def _ollama(prompt, config):
-    """Local LLM via Ollama's native HTTP API — stdlib only, no SDK, no API key."""
-    import json
-    import urllib.error
-    import urllib.request
-
-    host = config.get("ollama_host", "http://localhost:11434")
-    payload = json.dumps(
-        {
-            "model": config.get("ollama_model", "llama3.2"),
-            "prompt": prompt,
-            "stream": False,
-        }
-    ).encode()
-    req = urllib.request.Request(
-        f"{host}/api/generate", data=payload, headers={"Content-Type": "application/json"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.load(resp)["response"].strip()
-    except urllib.error.URLError as e:
-        raise EnvironmentError(
-            f"Cannot reach Ollama at {host} ({e.reason}).\n"
-            "Is Ollama running?  Start it with:  ollama serve\n"
-            f"And pull the model:  ollama pull {config.get('ollama_model', 'llama3.2')}"
-        )
