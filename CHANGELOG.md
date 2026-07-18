@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.0 (2026-07-19)
+
+### Features
+
+- **onboarding:** add first-run setup flow
+
+### Chores
+
+- add author metadata to pyproject
+
 ## v0.3.0 (2026-07-18)
 
 ### Features
