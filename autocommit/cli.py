@@ -6,7 +6,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .changelog import build_changelog
-from .config import load_config, save_config
+from .config import CONFIG_PATH, load_config, save_config
 from .explain import explain as _explain
 from .git import (
     get_branch_commits,
@@ -26,6 +26,7 @@ from .git import (
     unstage_all,
 )
 from .llm import generate
+from .onboarding import is_first_run, run_onboarding
 from .pr import write_pr
 from .review import offline_review
 from .review import review as _review
@@ -184,6 +185,17 @@ def cli(ctx, style, emoji, body, provider, no_ai, stage_all_files, yes):
         sys.exit(1)
 
     config = load_config()
+
+    # First-run onboarding: only when interactive and the user hasn't already
+    # said what they want. Never in the git hook (--yes) or a non-TTY pipe.
+    if (
+        is_first_run(CONFIG_PATH)
+        and sys.stdin.isatty()
+        and not yes
+        and not provider
+        and not no_ai
+    ):
+        config = run_onboarding(console, config)
 
     # CLI flag overrides
     if style:
