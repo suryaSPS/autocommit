@@ -9,6 +9,7 @@ description = "AI-powered git commit message generator — reads your staged dif
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Surya Pratap Singh", email = "suryasps20@gmail.com" }]
 keywords = ["git", "ai", "commit", "cli", "developer-tools"]
 classifiers = [
     "Development Status :: 4 - Beta",
