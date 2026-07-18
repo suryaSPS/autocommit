@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "commitpilot"
-version = "0.2.0"
+name = "commitstash"
+version = "0.3.0"
 description = "AI-powered git commit message generator — reads your staged diff, writes the commit for you"
 readme = "README.md"
 requires-python = ">=3.9"
