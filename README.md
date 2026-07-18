@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![PyPI](https://img.shields.io/badge/PyPI-autocommit--ai-orange.svg)](https://pypi.org/project/autocommit-ai/)
+[![PyPI](https://img.shields.io/pypi/v/commitpilot.svg)](https://pypi.org/project/commitpilot/)
 
 </div>
 
@@ -54,7 +54,7 @@ Staged (2 files):
 ## Installation
 
 ```bash
-pip install autocommit-ai
+pip install commitpilot
 ```
 
 ## Setup
